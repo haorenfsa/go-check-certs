@@ -11,6 +11,8 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -189,11 +191,17 @@ func processQueue(done <-chan struct{}, hosts <-chan string, results chan<- host
 }
 
 func checkHost(host string) (result hostResult) {
+	log.Println("Start checking ", host)
+	defer log.Println("Done checking ", host)
 	result = hostResult{
 		host:  host,
 		certs: []certErrors{},
 	}
-	conn, err := tls.Dial("tcp", host, nil)
+	timeout := 30 * time.Second
+	dialer := new(net.Dialer)
+	dialer.Timeout = timeout
+	dialer.Deadline = time.Now().Add(timeout)
+	conn, err := tls.DialWithDialer(dialer, "tcp", host, nil)
 	if err != nil {
 		result.err = err
 		return
