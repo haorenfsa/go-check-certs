@@ -5,23 +5,32 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/haorenfsa/gocheck-certs/pkg"
 )
 
 const defaultConcurrency = 8
 
 const (
-	errExpiringShortly = "%s: ** '%s' (S/N %X) expires in %d hours! **"
-	errExpiringSoon    = "%s: '%s' (S/N %X) expires in roughly %d days."
-	errSunsetAlg       = "%s: '%s' (S/N %X) expires after the sunset date for its signature algorithm '%s'."
+	errExpiringShortly = `[WARNING!!!!!!!!!!!!!!!!] 
+domain %s
+cert: %s
+expires in %d days
+`
+	errExpiringSoon = `[INFO] domain: %s
+cert: %s 
+expires in: %d days
+`
+	errSunsetAlg = "[WARNING!!!!!!!!!!!!!!!!]\t %s: '%s' expires after the sunset date for its signature algorithm '%s'."
 )
 
 type sigAlgSunset struct {
@@ -65,6 +74,7 @@ var (
 	warnDays    = flag.Int("days", 0, "Warn if the certificate will expire within this many days.")
 	checkSigAlg = flag.Bool("check-sig-alg", true, "Verify that non-root certificates are using a good signature algorithm.")
 	concurrency = flag.Int("concurrency", defaultConcurrency, "Maximum number of hosts to check at once.")
+	webhook     = flag.String("webhook", "", "The webhook URL to send the message to.")
 )
 
 type certErrors struct {
@@ -77,6 +87,8 @@ type hostResult struct {
 	err   error
 	certs []certErrors
 }
+
+var alarmer pkg.Alarmer
 
 func main() {
 	flag.Parse()
@@ -100,7 +112,7 @@ func main() {
 	if *concurrency < 0 {
 		*concurrency = defaultConcurrency
 	}
-
+	alarmer = pkg.NewLarkWebhookAlarmer(*webhook)
 	processHosts()
 }
 
@@ -124,17 +136,21 @@ func processHosts() {
 		close(results)
 	}()
 
+	var msg string = "Certificate check results:\n"
 	for r := range results {
 		if r.err != nil {
-			log.Printf("%s: %v\n", r.host, r.err)
+			msg += fmt.Sprintf(`[WARNING!!!!!!!!!!!!!!!!] %s: 
+%v
+`, r.host, r.err)
 			continue
 		}
 		for _, cert := range r.certs {
 			for _, err := range cert.errs {
-				log.Println(err)
+				msg += fmt.Sprintf("%s\n", err.Error())
 			}
 		}
 	}
+	alarmer.Alarm(context.Background(), msg)
 }
 
 func queueHosts(done <-chan struct{}) <-chan string {
@@ -197,17 +213,17 @@ func checkHost(host string) (result hostResult) {
 			// Check the expiration.
 			if timeNow.AddDate(*warnYears, *warnMonths, *warnDays).After(cert.NotAfter) {
 				expiresIn := int64(cert.NotAfter.Sub(timeNow).Hours())
-				if expiresIn <= 48 {
-					cErrs = append(cErrs, fmt.Errorf(errExpiringShortly, host, cert.Subject.CommonName, cert.SerialNumber, expiresIn))
+				if expiresIn <= 24*7 {
+					cErrs = append(cErrs, fmt.Errorf(errExpiringShortly, host, cert.Subject.CommonName, expiresIn/24))
 				} else {
-					cErrs = append(cErrs, fmt.Errorf(errExpiringSoon, host, cert.Subject.CommonName, cert.SerialNumber, expiresIn/24))
+					cErrs = append(cErrs, fmt.Errorf(errExpiringSoon, host, cert.Subject.CommonName, expiresIn/24))
 				}
 			}
 
 			// Check the signature algorithm, ignoring the root certificate.
 			if alg, exists := sunsetSigAlgs[cert.SignatureAlgorithm]; *checkSigAlg && exists && certNum != len(chain)-1 {
 				if cert.NotAfter.Equal(alg.sunsetsAt) || cert.NotAfter.After(alg.sunsetsAt) {
-					cErrs = append(cErrs, fmt.Errorf(errSunsetAlg, host, cert.Subject.CommonName, cert.SerialNumber, alg.name))
+					cErrs = append(cErrs, fmt.Errorf(errSunsetAlg, host, cert.Subject.CommonName, alg.name))
 				}
 			}
 

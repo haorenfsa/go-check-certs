@@ -1,0 +1,21 @@
+# cronjob that run a image on every weekday
+
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: weekday-job
+spec:
+  schedule: "*/1 * * * 1"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: weekday-job
+            image: busybox
+            args:
+            # set this to always print the date when the job runs
+            - "-years=1"
+            - "-hosts=./hosts"
+            - "-webhook=${WebhookAddr}"
+          restartPolicy: OnFailure

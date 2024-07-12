@@ -1,0 +1,25 @@
+# sit
+cloud-sit.zilliz.com:443
+api.aws-us-west-2.cloud-sit.zilliz.com:443
+metrics-internal.aws-us-west-2.vectordb-sit.zillizcloud.com:443
+
+# uat
+cloud-uat3.zilliz.com:443
+metrics-internal.aws-us-west-2.vectordb-uat3.zillizcloud.com:443
+metrics-internal.az-westus3.vectordb-uat3.zillizcloud.com:443
+metrics-internal.gcp-us-west1.vectordb-uat3.zillizcloud.com:443
+api.gcp-us-west1.cloud-uat3.zilliz.com:443
+
+# cn uat
+cloud-uat.zilliz.cn:443
+metrics-internal.ali-cn-hangzhou.cloud-uat.zilliz.cn:443
+metrics-internal.tc-ap-nanjing.cloud-uat.zilliz.cn:443
+api.ali-cn-hangzhou.cloud-uat.zilliz.cn:443
+
+# jumpbox
+jumpbox.op.zilliz.com.cn:443
+jumpbox.op.zillizcloud.com:443
+
+# cicd
+jenkins-3.zilliz.cc:443
+argocd.op.zillizcloud.com:443
