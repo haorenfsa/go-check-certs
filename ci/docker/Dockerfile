@@ -12,7 +12,7 @@ COPY go.sum /workspace/go.sum
 
 RUN go build -o check-certs check-certs.go
 
-FROM ubuntu:20.04 as runner
+FROM ubuntu:focal-20220426 as runner
 
 WORKDIR /app
 
