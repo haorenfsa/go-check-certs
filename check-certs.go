@@ -35,6 +35,11 @@ expires in: %d days
 	errSunsetAlg = "[WARNING!!!!!!!!!!!!!!!!]\t %s: '%s' expires after the sunset date for its signature algorithm '%s'."
 )
 
+type Host struct {
+	Addr       string
+	ServerName string
+}
+
 type sigAlgSunset struct {
 	name      string    // Human readable name of signature algorithm
 	sunsetsAt time.Time // Time the algorithm will be sunset
@@ -155,8 +160,8 @@ func processHosts() {
 	alarmer.Alarm(context.Background(), msg)
 }
 
-func queueHosts(done <-chan struct{}) <-chan string {
-	hosts := make(chan string)
+func queueHosts(done <-chan struct{}) <-chan Host {
+	hosts := make(chan Host)
 	go func() {
 		defer close(hosts)
 
@@ -166,9 +171,18 @@ func queueHosts(done <-chan struct{}) <-chan string {
 		}
 		lines := strings.Split(string(fileContents), "\n")
 		for _, line := range lines {
-			host := strings.TrimSpace(line)
-			if len(host) == 0 || host[0] == '#' {
+			record := strings.TrimSpace(line)
+			if len(record) == 0 || record[0] == '#' {
 				continue
+			}
+			parts := strings.Split(record, " ")
+			addrServerName := strings.Split(parts[0], ":")[0]
+			host := Host{
+				Addr:       parts[0],
+				ServerName: addrServerName,
+			}
+			if len(parts) > 1 {
+				host.ServerName = parts[1]
 			}
 			select {
 			case hosts <- host:
@@ -180,7 +194,7 @@ func queueHosts(done <-chan struct{}) <-chan string {
 	return hosts
 }
 
-func processQueue(done <-chan struct{}, hosts <-chan string, results chan<- hostResult) {
+func processQueue(done <-chan struct{}, hosts <-chan Host, results chan<- hostResult) {
 	for host := range hosts {
 		select {
 		case results <- checkHost(host):
@@ -190,18 +204,18 @@ func processQueue(done <-chan struct{}, hosts <-chan string, results chan<- host
 	}
 }
 
-func checkHost(host string) (result hostResult) {
-	log.Println("Start checking ", host)
-	defer log.Println("Done checking ", host)
+func checkHost(host Host) (result hostResult) {
+	log.Println("Start checking ", host.ServerName)
+	defer log.Println("Done checking ", host.ServerName)
 	result = hostResult{
-		host:  host,
+		host:  host.ServerName,
 		certs: []certErrors{},
 	}
 	timeout := 30 * time.Second
 	dialer := new(net.Dialer)
 	dialer.Timeout = timeout
 	dialer.Deadline = time.Now().Add(timeout)
-	conn, err := tls.DialWithDialer(dialer, "tcp", host, nil)
+	conn, err := tls.DialWithDialer(dialer, "tcp", host.Addr, &tls.Config{ServerName: host.ServerName})
 	if err != nil {
 		result.err = err
 		return
@@ -222,16 +236,16 @@ func checkHost(host string) (result hostResult) {
 			if timeNow.AddDate(*warnYears, *warnMonths, *warnDays).After(cert.NotAfter) {
 				expiresIn := int64(cert.NotAfter.Sub(timeNow).Hours())
 				if expiresIn <= 24*7 {
-					cErrs = append(cErrs, fmt.Errorf(errExpiringShortly, host, cert.Subject.CommonName, expiresIn/24))
+					cErrs = append(cErrs, fmt.Errorf(errExpiringShortly, host.ServerName, cert.Subject.CommonName, expiresIn/24))
 				} else {
-					cErrs = append(cErrs, fmt.Errorf(errExpiringSoon, host, cert.Subject.CommonName, expiresIn/24))
+					cErrs = append(cErrs, fmt.Errorf(errExpiringSoon, host.ServerName, cert.Subject.CommonName, expiresIn/24))
 				}
 			}
 
 			// Check the signature algorithm, ignoring the root certificate.
 			if alg, exists := sunsetSigAlgs[cert.SignatureAlgorithm]; *checkSigAlg && exists && certNum != len(chain)-1 {
 				if cert.NotAfter.Equal(alg.sunsetsAt) || cert.NotAfter.After(alg.sunsetsAt) {
-					cErrs = append(cErrs, fmt.Errorf(errSunsetAlg, host, cert.Subject.CommonName, alg.name))
+					cErrs = append(cErrs, fmt.Errorf(errSunsetAlg, host.ServerName, cert.Subject.CommonName, alg.name))
 				}
 			}
 
