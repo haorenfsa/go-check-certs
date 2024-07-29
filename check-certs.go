@@ -159,7 +159,7 @@ func processHosts() {
 	}
 	err := alarmer.Alarm(context.Background(), msg)
 	if err != nil {
-		log.Println("Failed to send alarm: ", err)
+		log.Panic("Failed to send alarm: ", err)
 	}
 }
 
