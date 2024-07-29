@@ -14,7 +14,7 @@ RUN go build -o check-certs check-certs.go
 
 FROM ubuntu:focal-20220426 as runner
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
     apt-get remove --purge -y && \
     rm -rf /var/lib/apt/lists/*
 
