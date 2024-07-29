@@ -157,7 +157,10 @@ func processHosts() {
 			}
 		}
 	}
-	alarmer.Alarm(context.Background(), msg)
+	err := alarmer.Alarm(context.Background(), msg)
+	if err != nil {
+		log.Println("Failed to send alarm: ", err)
+	}
 }
 
 func queueHosts(done <-chan struct{}) <-chan Host {
