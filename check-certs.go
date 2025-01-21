@@ -143,21 +143,25 @@ func processHosts() {
 		close(results)
 	}()
 
-	var msg string = "Certificate check results:\n"
+	var finalMsg string = "Certificate check results:\n"
+	var criticalMsg string
+	var infoMsg string
 	for r := range results {
 		if r.err != nil {
-			msg += fmt.Sprintf(`[WARNING!!!!!!!!!!!!!!!!] %s: 
+			criticalMsg += fmt.Sprintf(`[WARNING!!!!!!!!!!!!!!!!] %s: 
 %v
+
 `, r.host, r.err)
 			continue
 		}
 		for _, cert := range r.certs {
 			for _, err := range cert.errs {
-				msg += fmt.Sprintf("%s\n", err.Error())
+				infoMsg += fmt.Sprintf("%s\n", err.Error())
 			}
 		}
 	}
-	err := alarmer.Alarm(context.Background(), msg)
+	finalMsg = criticalMsg + infoMsg
+	err := alarmer.Alarm(context.Background(), finalMsg)
 	if err != nil {
 		log.Panic("Failed to send alarm: ", err)
 	}
@@ -238,7 +242,7 @@ func checkHost(host Host) (result hostResult) {
 			// Check the expiration.
 			if timeNow.AddDate(*warnYears, *warnMonths, *warnDays).After(cert.NotAfter) {
 				expiresIn := int64(cert.NotAfter.Sub(timeNow).Hours())
-				if expiresIn <= 24*7 {
+				if expiresIn <= 24*24 {
 					cErrs = append(cErrs, fmt.Errorf(errExpiringShortly, host.ServerName, cert.Subject.CommonName, expiresIn/24))
 				} else {
 					cErrs = append(cErrs, fmt.Errorf(errExpiringSoon, host.ServerName, cert.Subject.CommonName, expiresIn/24))
