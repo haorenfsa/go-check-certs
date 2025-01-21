@@ -228,7 +228,7 @@ func checkHost(host Host) (result hostResult) {
 	dialer.Deadline = time.Now().Add(timeout)
 	conn, err := tls.DialWithDialer(dialer, "tcp", host.Addr, &tls.Config{ServerName: host.ServerName})
 	if err != nil {
-		result.err = err
+		result.err = fmt.Errorf("[WARNING!!!!!!!!!!!!!!!!]\n domain: %s\n error: %s\n\n", host.ServerName, err)
 		return
 	}
 	defer conn.Close()
