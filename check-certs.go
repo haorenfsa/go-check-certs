@@ -27,10 +27,12 @@ const (
 domain %s
 cert: %s
 expires in %d days
+
 `
-	errExpiringSoon = `[INFO] domain: %s
+	infoExpireTime = `[INFO] domain: %s
 cert: %s 
 expires in: %d days
+
 `
 	errSunsetAlg = "[WARNING!!!!!!!!!!!!!!!!]\t %s: '%s' expires after the sunset date for its signature algorithm '%s'."
 )
@@ -76,23 +78,24 @@ var sunsetSigAlgs = map[x509.SignatureAlgorithm]sigAlgSunset{
 
 var (
 	hostsFile   = flag.String("hosts", "", "The path to the file containing a list of hosts to check.")
-	warnYears   = flag.Int("years", 0, "Warn if the certificate will expire within this many years.")
-	warnMonths  = flag.Int("months", 0, "Warn if the certificate will expire within this many months.")
-	warnDays    = flag.Int("days", 0, "Warn if the certificate will expire within this many days.")
+	infoYears   = flag.Int("years", 0, "Info if the certificate will expire within this many years.")
+	infoMonths  = flag.Int("months", 0, "Info if the certificate will expire within this many months.")
+	infoDays    = flag.Int("days", 0, "Info if the certificate will expire within this many days.")
+	warnDays    = flag.Int("warn-days", 24, "Warn if the certificate will expire within this many days.")
 	checkSigAlg = flag.Bool("check-sig-alg", true, "Verify that non-root certificates are using a good signature algorithm.")
 	concurrency = flag.Int("concurrency", defaultConcurrency, "Maximum number of hosts to check at once.")
 	webhook     = flag.String("webhook", "", "The webhook URL to send the message to.")
 )
 
-type certErrors struct {
+type certInfo struct {
 	commonName string
-	errs       []error
+	info       []string
 }
 
 type hostResult struct {
-	host  string
-	err   error
-	certs []certErrors
+	host string
+	err  error
+	info []certInfo
 }
 
 var alarmer pkg.Alarmer
@@ -104,22 +107,26 @@ func main() {
 		flag.Usage()
 		return
 	}
-	if *warnYears < 0 {
-		*warnYears = 0
+	if *infoYears < 0 {
+		*infoYears = 0
 	}
-	if *warnMonths < 0 {
-		*warnMonths = 0
+	if *infoMonths < 0 {
+		*infoMonths = 0
 	}
-	if *warnDays < 0 {
-		*warnDays = 0
+	if *infoDays < 0 {
+		*infoDays = 0
 	}
-	if *warnYears == 0 && *warnMonths == 0 && *warnDays == 0 {
-		*warnDays = 30
+	if *infoYears == 0 && *infoMonths == 0 && *infoDays == 0 {
+		*infoDays = 30
 	}
 	if *concurrency < 0 {
 		*concurrency = defaultConcurrency
 	}
-	alarmer = pkg.NewLarkWebhookAlarmer(*webhook)
+	if *webhook == "" {
+		alarmer = pkg.StdOutAlarmer{}
+	} else {
+		alarmer = pkg.NewLarkWebhookAlarmer(*webhook)
+	}
 	processHosts()
 }
 
@@ -148,19 +155,16 @@ func processHosts() {
 	var infoMsg string
 	for r := range results {
 		if r.err != nil {
-			criticalMsg += fmt.Sprintf(`[WARNING!!!!!!!!!!!!!!!!] %s: 
-%v
-
-`, r.host, r.err)
+			criticalMsg += r.err.Error()
 			continue
 		}
-		for _, cert := range r.certs {
-			for _, err := range cert.errs {
-				infoMsg += fmt.Sprintf("%s\n", err.Error())
+		for _, cert := range r.info {
+			for _, info := range cert.info {
+				infoMsg += info
 			}
 		}
 	}
-	finalMsg = criticalMsg + infoMsg
+	finalMsg += criticalMsg + infoMsg
 	err := alarmer.Alarm(context.Background(), finalMsg)
 	if err != nil {
 		log.Panic("Failed to send alarm: ", err)
@@ -212,11 +216,11 @@ func processQueue(done <-chan struct{}, hosts <-chan Host, results chan<- hostRe
 }
 
 func checkHost(host Host) (result hostResult) {
-	log.Println("Start checking ", host.ServerName)
-	defer log.Println("Done checking ", host.ServerName)
+	log.Println(">Start checking ", host.ServerName)
+	defer log.Println("[Done] checking ", host.ServerName)
 	result = hostResult{
-		host:  host.ServerName,
-		certs: []certErrors{},
+		host: host.ServerName,
+		info: []certInfo{},
 	}
 	timeout := 30 * time.Second
 	dialer := new(net.Dialer)
@@ -237,28 +241,29 @@ func checkHost(host Host) (result hostResult) {
 				continue
 			}
 			checkedCerts[string(cert.Signature)] = struct{}{}
-			cErrs := []error{}
+			cinfos := []string{}
 
 			// Check the expiration.
-			if timeNow.AddDate(*warnYears, *warnMonths, *warnDays).After(cert.NotAfter) {
+			if timeNow.AddDate(*infoYears, *infoMonths, *infoDays).After(cert.NotAfter) {
 				expiresIn := int64(cert.NotAfter.Sub(timeNow).Hours())
-				if expiresIn <= 24*24 {
-					cErrs = append(cErrs, fmt.Errorf(errExpiringShortly, host.ServerName, cert.Subject.CommonName, expiresIn/24))
+				if expiresIn <= 24*int64(*warnDays) {
+					result.err = fmt.Errorf(errExpiringShortly, host.ServerName, cert.Subject.CommonName, expiresIn/24)
+					return
 				} else {
-					cErrs = append(cErrs, fmt.Errorf(errExpiringSoon, host.ServerName, cert.Subject.CommonName, expiresIn/24))
+					cinfos = append(cinfos, fmt.Sprintf(infoExpireTime, host.ServerName, cert.Subject.CommonName, expiresIn/24))
 				}
 			}
 
 			// Check the signature algorithm, ignoring the root certificate.
 			if alg, exists := sunsetSigAlgs[cert.SignatureAlgorithm]; *checkSigAlg && exists && certNum != len(chain)-1 {
 				if cert.NotAfter.Equal(alg.sunsetsAt) || cert.NotAfter.After(alg.sunsetsAt) {
-					cErrs = append(cErrs, fmt.Errorf(errSunsetAlg, host.ServerName, cert.Subject.CommonName, alg.name))
+					cinfos = append(cinfos, fmt.Sprintf(errSunsetAlg, host.ServerName, cert.Subject.CommonName, alg.name))
 				}
 			}
 
-			result.certs = append(result.certs, certErrors{
+			result.info = append(result.info, certInfo{
 				commonName: cert.Subject.CommonName,
-				errs:       cErrs,
+				info:       cinfos,
 			})
 		}
 	}

@@ -21,6 +21,14 @@ type LarkWebhookAlarmer struct {
 	webhook string
 }
 
+type StdOutAlarmer struct {
+}
+
+func (cli StdOutAlarmer) Alarm(ctx context.Context, msg string) error {
+	fmt.Println(msg)
+	return nil
+}
+
 func NewLarkWebhookAlarmer(webhook string) *LarkWebhookAlarmer {
 	httpCli := http.Client{
 		Timeout: 30 * time.Second,
